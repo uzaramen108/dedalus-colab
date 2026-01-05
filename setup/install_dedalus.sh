@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
-echo "🔧 Installing Dedalus with micromamba"
+# ==================================================
+# dedalus install script for Google Colab
+# - micromamba binary : /content/micromamba/bin
+# - package cache     : Google Drive (if mounted)
+#                       or local (/content)
+# ==================================================
+
+echo "🔧 Installing dedalus with micromamba"
 
 # --------------------------------------------------
 # 1. Paths 
@@ -65,5 +72,12 @@ else
   "${MAMBA_BIN}" env create -n "${ENV_NAME}" -f "${YML_FILE}"
 fi
 
+# --------------------------------------------------
+# 7. Summary
+# --------------------------------------------------
 echo
-echo "✅ Dedalus environment ready"
+echo "✅ dedalus environment ready"
+echo "📦 micromamba : ${MAMBA_BIN}"
+echo "📦 env name   : ${ENV_NAME}"
+echo "📦 pkg cache  : ${MAMBA_PKGS_DIRS}"
+echo
