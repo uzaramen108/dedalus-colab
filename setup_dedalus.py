@@ -4,48 +4,75 @@ import subprocess, os, sys
 # ==================================================
 # Repository-relative paths
 # ==================================================
-# Note: In a real repo, this would be __file__. 
-# If running directly in Colab cell as a script, we assume CWD is the root.
-
 REPO_DIR = Path(__file__).resolve().parent
 
 INSTALL_SCRIPT = REPO_DIR / "setup" / "install_dedalus.sh"
 MAGIC_FILE     = REPO_DIR / "magic" / "dedalus_magic.py"
+#TEST_FILE      = REPO_DIR / "tests" / "test_dedalus_basic.py"
+
+MICROMAMBA = "/content/micromamba/bin/micromamba"
 
 # ==================================================
 # Helpers
 # ==================================================
 def run(cmd, cwd=None):
+    #print("   $", " ".join(map(str, cmd)))
     result = subprocess.run(
         cmd, 
         cwd=cwd, 
         check=True,
-        capture_output=False, # Let output flow to stdout
+        capture_output=True,
         text=True
     )
     return result
 
 # ==================================================
-# 1. Install / update Dedalus environment
+# Sanity checks
 # ==================================================
-opts = sys.argv[1:]
-print("🔧 Installing Dedalus environment...")
-# Make script executable just in case
-subprocess.run(["chmod", "+x", str(INSTALL_SCRIPT)])
+if not INSTALL_SCRIPT.exists():
+    print("❌ install_dedalus.sh not found:", INSTALL_SCRIPT)
+    sys.exit(1)
+
+if not MAGIC_FILE.exists():
+    print("❌ dedalus_magic.py not found:", MAGIC_FILE)
+    sys.exit(1)
+
+# ==================================================
+# 0. Ensure Google Drive (for cache)
+# ==================================================
+USE_DRIVE_CACHE = False
+
+if Path("/content/drive/MyDrive").exists():
+    print("📦 Google Drive detected — using persistent cache")
+    USE_DRIVE_CACHE = True
+else:
+    print("⚠️ Google Drive not mounted — using local cache (/content)")
+  
+# ==================================================
+# 1. Install / update dedalus environment
+# ==================================================
+opts = sys.argv[1:]   # e.g. --clean / --force
+print("🔧 Installing dedalus environment...")
 run(["bash", str(INSTALL_SCRIPT), *opts], cwd=REPO_DIR)
 
 # ==================================================
 # 2. Load %%dedalus magic
 # ==================================================
-print("✨ Loading Dedalus Jupyter magic...", end=" ")
-if MAGIC_FILE.exists():
-    code = MAGIC_FILE.read_text()
-    exec(compile(code, str(MAGIC_FILE), "exec"), globals())
-    # Manually load the extension since we are exec-ing inside a script
-    try:
-        load_ipython_extension(get_ipython())
-        print("%%dedalus registered ✅")
-    except Exception as e:
-        print(f"\n⚠️ Failed to register magic: {e}")
-else:
-    print(f"\n❌ Magic file not found: {MAGIC_FILE}")
+print("✨ Loading dedalus Jupyter magic...", end=" ")
+code = MAGIC_FILE.read_text()
+exec(compile(code, str(MAGIC_FILE), "exec"), globals())
+print("%%dedalus registered")
+
+# # ==================================================
+# # 3. Optional self-test
+# # ==================================================
+# if TEST_FILE.exists():
+#     print("\n🧪 Running dedalus self-test...")
+#     run([
+#         MICROMAMBA, "run", "-n", "dedalus",
+#         "mpiexec", "-n", "4",
+#         "python", str(TEST_FILE)
+#     ])
+#     print("🧪 dedalus self-test passed ✅")
+# else:
+#     print("⚠️ No self-test found — skipping")

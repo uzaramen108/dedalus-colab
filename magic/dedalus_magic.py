@@ -6,7 +6,7 @@ import os, subprocess, tempfile, textwrap, shlex
 from IPython.core.magic import register_cell_magic
 
 # --------------------------------------------------
-# Hard-coded micromamba path
+# Hard-coded micromamba path (NO PATH DEPENDENCY)
 # --------------------------------------------------
 MICROMAMBA = "/content/micromamba/bin/micromamba"
 ENV_NAME = "dedalus"
@@ -16,11 +16,9 @@ ENV_NAME = "dedalus"
 # --------------------------------------------------
 def detect_mpi(env):
     try:
-        # Check MPI version inside the micromamba environment
-        cmd = [MICROMAMBA, "run", "-n", ENV_NAME, "mpiexec", "--version"]
         out = subprocess.run(
-            cmd,
-            env=env, capture_output=True, text=True, timeout=5
+            ["mpiexec", "--version"],
+            env=env, capture_output=True, text=True, timeout=2
         )
         txt = (out.stdout + out.stderr).lower()
         if "open mpi" in txt or "open-mpi" in txt:
@@ -31,10 +29,9 @@ def detect_mpi(env):
 
 def mpi_version(env):
     try:
-        cmd = [MICROMAMBA, "run", "-n", ENV_NAME, "mpiexec", "--version"]
         out = subprocess.run(
-            cmd,
-            env=env, capture_output=True, text=True, timeout=5
+            ["mpiexec", "--version"],
+            env=env, capture_output=True, text=True, timeout=2
         )
         return (out.stdout + out.stderr).splitlines()[0]
     except Exception:
@@ -56,22 +53,15 @@ def dedalus(line, cell):
     time_mode = "--time" in args
 
     if "-np" in args:
-        try:
-            np = int(args[args.index("-np") + 1])
-        except (ValueError, IndexError):
-            print("❌ Error: -np option requires an integer argument")
-            return
+        np = int(args[args.index("-np") + 1])
 
     # -----------------------------
     # Environment
     # -----------------------------
     env = os.environ.copy()
-    # OpenMPI often requires these flags to run as root in containers (Colab)
     env.update({
         "OMPI_ALLOW_RUN_AS_ROOT": "1",
         "OMPI_ALLOW_RUN_AS_ROOT_CONFIRM": "1",
-        "OMP_NUM_THREADS": "1",        # Avoid thread oversubscription
-        "NUMEXPR_MAX_THREADS": "1",
     })
 
     mpi_impl = detect_mpi(env)
@@ -81,15 +71,13 @@ def dedalus(line, cell):
     # Command builder
     # -----------------------------
     def build_cmd(script):
-        # Even for np=1, running through mpiexec ensures the environment is consistent
-        # But `python script.py` is faster for serial. Let's stick to MPI logic if requested.
-        
-        launcher = "mpirun" if mpi_impl == "openmpi" else "mpiexec"
-        
-        if np == 1 and not info_mode:
-             # Serial execution optimization (optional, but safe to use mpiexec always)
-             pass 
+        if np == 1:
+            return [
+                MICROMAMBA, "run", "-n", ENV_NAME,
+                "python", script
+            ]
 
+        launcher = "mpirun" if mpi_impl == "openmpi" else "mpiexec"
         return [
             MICROMAMBA, "run", "-n", ENV_NAME,
             launcher, "-n", str(np),
@@ -101,18 +89,16 @@ def dedalus(line, cell):
     # -----------------------------
     if info_mode:
         info_code = """
-import dedalus.public as d3
 from mpi4py import MPI
-import sys, platform, os
+import dolfinx, sys, platform, os
 
 comm = MPI.COMM_WORLD
 if comm.rank == 0:
     print()
     print("🐍 Python          :", sys.version.split()[0])
-    print("🌊 Dedalus         :", d3.__version__)
+    print("📦 dolfinx         :", dolfinx.__version__)
     print("💻 Platform        :", platform.platform())
     print("🧵 Running as root :", os.geteuid() == 0)
-    print("⚡ MPI Size        :", comm.Get_size())
 """
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
             f.write(info_code)
@@ -128,7 +114,7 @@ if comm.rank == 0:
         finally:
             os.remove(script)
 
-        print("\n🔎 Dedalus runtime info")
+        print("\n🔎 dedalus runtime info")
         print("-----------------------")
         print(f"Environment        : {ENV_NAME}")
         print(f"micromamba         : {MICROMAMBA}")
@@ -160,12 +146,7 @@ _t0 = time.perf_counter()
 # -----------------
 # User code
 # -----------------
-try:
-{textwrap.indent(user_code, '    ')}
-except Exception as e:
-    import traceback
-    traceback.print_exc()
-    _comm.Abort(1)
+{user_code}
 
 # -----------------
 # synchronize after user code
@@ -180,44 +161,18 @@ if _rank == 0:
     print(f"⏱ Elapsed time: {{_t1 - _t0:.6f}} s")
 """
     else:
-        # Simple wrapping to catch errors and abort MPI properly
-        wrapped = f"""
-try:
-{textwrap.indent(user_code, '    ')}
-except Exception as e:
-    import traceback
-    from mpi4py import MPI
-    traceback.print_exc()
-    MPI.COMM_WORLD.Abort(1)
-"""
+        wrapped = user_code
 
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
         f.write(wrapped)
         script = f.name
 
     try:
-        # Real-time output streaming is tricky with subprocess.run capture_output=True.
-        # But capture_output=False prints to the console directly which is what we want in Colab cells.
-        # FEniCSx script used capture_output=True which buffers output until the end.
-        # For long simulations, we might want to stream it. 
-        # But let's keep consistency with the FEniCSx logic first.
-        
-        # Using Popen to stream output line by line for long running Dedalus sims
-        process = subprocess.Popen(
+        res = subprocess.run(
             build_cmd(script),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            universal_newlines=True
+            env=env, capture_output=True, text=True
         )
-        
-        for line in process.stdout:
-            print(line, end="")
-            
-        process.wait()
-        
+        print(res.stdout, end="")
+        print(res.stderr, end="")
     finally:
-        if os.path.exists(script):
-            os.remove(script)
+        os.remove(script)
