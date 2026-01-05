@@ -1,0 +1,14 @@
+name: dedalus
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - dedalus                 # MPI가 포함된 바이너리 설치
+  - mpi4py                  # 파이썬 MPI 래퍼
+  - h5py                    # 데이터 입출력
+  - matplotlib              # 시각화
+  - scipy
+  - numpy
+variables:
+  OMP_NUM_THREADS: "1"      # [중요] MPI와 충돌 방지를 위해 스레드 1로 고정
+  NUMEXPR_MAX_THREADS: "1"
